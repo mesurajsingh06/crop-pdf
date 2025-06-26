@@ -3,83 +3,38 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Manual PDF Crop Tool</title>
+  <title>Manual PDF Crop Tool (All Pages, VISUAL Crop)</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f7f7f7;
-      margin: 0;
-      padding: 40px;
-    }
-    .container {
-      max-width: 800px;
-      margin: auto;
-      background: #fff;
-      padding: 30px;
-      border-radius: 10px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.1);
-      text-align: center;
-    }
-    h1 {
-      color: #444;
-      margin-bottom: 20px;
-    }
-    canvas {
-      border: 1px solid #ccc;
-      margin-top: 20px;
-      cursor: crosshair;
-    }
-    input[type="file"] {
-      margin: 20px 0;
-    }
-    .btn {
-      background: #667eea;
-      color: white;
-      padding: 12px 20px;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      margin-top: 20px;
-    }
-    .btn:hover {
-      background: #556cd6;
-    }
-    .error-message {
-      color: #fff;
-      background: #e74c3c;
-      padding: 10px;
-      border-radius: 5px;
-      display: none;
-      margin-bottom: 10px;
-    }
-    .success-message {
-      color: #fff;
-      background: #2ecc71;
-      padding: 10px;
-      border-radius: 5px;
-      display: none;
-      margin-bottom: 10px;
-    }
+    body { font-family: Arial, sans-serif; background: #f7f7f7; margin: 0; padding: 40px; }
+    .container { max-width: 800px; margin: auto; background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); text-align: center; }
+    h1 { color: #444; margin-bottom: 20px; }
+    canvas { border: 1px solid #ccc; margin-top: 20px; cursor: crosshair; }
+    input[type="file"] { margin: 20px 0; }
+    .btn { background: #667eea; color: white; padding: 12px 20px; border: none; border-radius: 5px; cursor: pointer; margin-top: 20px; }
+    .btn:hover { background: #556cd6; }
+    .error-message { color: #fff; background: #e74c3c; padding: 10px; border-radius: 5px; display: none; margin-bottom: 10px; }
+    .success-message { color: #fff; background: #2ecc71; padding: 10px; border-radius: 5px; display: none; margin-bottom: 10px; }
+    #progress { color: #444; font-size: 14px; margin-top: 20px; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>📄 Manually Crop PDF (All Pages)</h1>
+    <h1>📄 Manually Crop PDF (All Pages, VISUAL Crop)</h1>
     <div id="errorMsg" class="error-message"></div>
     <div id="successMsg" class="success-message"></div>
     <input type="file" id="pdfInput" accept="application/pdf" />
     <br />
     <canvas id="pdfCanvas"></canvas>
     <br />
-    <button class="btn" onclick="applyCrop()">Crop & Download</button>
+    <button class="btn" onclick="applyVisualCrop()">Crop & Download (All Pages)</button>
+    <div id="progress"></div>
     <p style="margin-top:30px;color:#999;font-size:14px;">
-      Note: The crop area you select on page 1 will be applied to <b>all pages</b>.<br>
-      If PDF preview does not load, try another browser or check if your network blocks external scripts.<br>
-      <b>If nothing happens after clicking download:</b> open DevTools (F12) and check the console for errors.
+      Note: The crop area you select on page 1 will be applied visually to <b>all pages</b>.<br>
+      This method always works, even in Chrome & browser viewers.<br>
+      For large PDFs, processing may take a few seconds.
     </p>
   </div>
 
-  <!-- PDF.js and worker from UNPKG -->
   <script src="https://unpkg.com/pdfjs-dist@2.10.377/build/pdf.min.js"></script>
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@2.10.377/build/pdf.worker.min.js';
@@ -93,15 +48,17 @@
     let originalPageHeight = 0;
     let scaleFactor = 1;
     let uploadedFile;
+    let firstPageViewport;
     let pdfPage;
-    let pdfViewport;
     let pdfRenderedImageData = null;
+    let pdfDoc;
     let pageCount = 1;
 
     const canvas = document.getElementById('pdfCanvas');
     const ctx = canvas.getContext('2d');
     const errorMsg = document.getElementById('errorMsg');
     const successMsg = document.getElementById('successMsg');
+    const progressMsg = document.getElementById('progress');
 
     function showError(msg) {
       errorMsg.style.display = 'block';
@@ -113,9 +70,13 @@
       successMsg.textContent = msg;
       setTimeout(() => successMsg.style.display = 'none', 4000);
     }
+    function setProgress(msg) {
+      progressMsg.textContent = msg;
+    }
 
     document.getElementById('pdfInput').addEventListener('change', async function(e) {
       cropRect = null;
+      progressMsg.textContent = '';
       const file = e.target.files[0];
       if (!file || file.type !== 'application/pdf') { showError('Please upload a valid PDF file.'); return; }
       uploadedFile = file;
@@ -123,18 +84,18 @@
       fileReader.onload = async function() {
         try {
           const typedarray = new Uint8Array(this.result);
-          const pdf = await pdfjsLib.getDocument({ data: typedarray }).promise;
-          pageCount = pdf.numPages;
-          pdfPage = await pdf.getPage(1);
-          pdfViewport = pdfPage.getViewport({ scale: 1.5 });
+          pdfDoc = await pdfjsLib.getDocument({ data: typedarray }).promise;
+          pageCount = pdfDoc.numPages;
+          pdfPage = await pdfDoc.getPage(1);
+          firstPageViewport = pdfPage.getViewport({ scale: 1.5 });
           originalPageWidth = pdfPage.view[2];
           originalPageHeight = pdfPage.view[3];
-          scaleFactor = pdfViewport.width / originalPageWidth;
-          canvas.width = pdfViewport.width;
-          canvas.height = pdfViewport.height;
+          scaleFactor = firstPageViewport.width / originalPageWidth;
+          canvas.width = firstPageViewport.width;
+          canvas.height = firstPageViewport.height;
           const renderContext = {
             canvasContext: ctx,
-            viewport: pdfViewport,
+            viewport: firstPageViewport,
           };
           await pdfPage.render(renderContext).promise;
           pdfRenderedImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -189,34 +150,73 @@
       ctx.stroke();
     });
 
-    async function applyCrop() {
+    async function applyVisualCrop() {
       if (!uploadedFile || !cropRect) { showError('Please upload a PDF and select a crop area.'); return; }
+      setProgress('Processing, please wait...');
       try {
+        // Calculate crop area in first page's viewport pixels
+        const cropX = Math.round(cropRect.x);
+        const cropY = Math.round(cropRect.y);
+        const cropWidth = Math.round(cropRect.width);
+        const cropHeight = Math.round(cropRect.height);
+        if (cropWidth <= 0 || cropHeight <= 0) { showError('Invalid crop area selected.'); setProgress(''); return; }
+
+        // Load PDF with PDF.js again for fresh arrayBuffer
         const arrayBuffer = await uploadedFile.arrayBuffer();
-        const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
-        const pages = pdfDoc.getPages();
-        // Convert canvas crop coordinates (from top-left) to PDF crop box (bottom-left origin)
-        const cropX = cropRect.x / scaleFactor;
-        const cropY = (canvas.height - (cropRect.y + cropRect.height)) / scaleFactor;
-        const cropWidth = cropRect.width / scaleFactor;
-        const cropHeight = cropRect.height / scaleFactor;
-        if (cropWidth <= 0 || cropHeight <= 0) { showError('Invalid crop area selected.'); return; }
-        // Apply crop to ALL pages!
-        pages.forEach((page) => {
-          page.setCropBox(cropX, cropY, cropWidth, cropHeight);
-          page.setMediaBox(cropX, cropY, cropWidth, cropHeight);
-        });
-        const pdfBytes = await pdfDoc.save();
-        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+
+        // Create a new PDF with pdf-lib
+        const newPdfDoc = await PDFLib.PDFDocument.create();
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+          setProgress(`Processing page ${i} of ${pdf.numPages}...`);
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 1.5 });
+
+          // Create offscreen canvas to render the page
+          const pageCanvas = document.createElement('canvas');
+          pageCanvas.width = viewport.width;
+          pageCanvas.height = viewport.height;
+          const pageCtx = pageCanvas.getContext('2d');
+          await page.render({ canvasContext: pageCtx, viewport }).promise;
+
+          // Crop the area
+          const cropData = pageCtx.getImageData(cropX, cropY, cropWidth, cropHeight);
+          // Create a new canvas for the cropped image
+          const croppedCanvas = document.createElement('canvas');
+          croppedCanvas.width = cropWidth;
+          croppedCanvas.height = cropHeight;
+          const croppedCtx = croppedCanvas.getContext('2d');
+          croppedCtx.putImageData(cropData, 0, 0);
+
+          // Convert cropped canvas to PNG
+          const croppedDataUrl = croppedCanvas.toDataURL('image/png');
+          const pngImageBytes = await fetch(croppedDataUrl).then(res => res.arrayBuffer());
+
+          // Add image as a new page in new PDF
+          const pdfImage = await newPdfDoc.embedPng(pngImageBytes);
+          const pageRef = newPdfDoc.addPage([cropWidth, cropHeight]);
+          pageRef.drawImage(pdfImage, {
+            x: 0,
+            y: 0,
+            width: cropWidth,
+            height: cropHeight
+          });
+        }
+        setProgress('Saving PDF...');
+        const newPdfBytes = await newPdfDoc.save();
+        const blob = new Blob([newPdfBytes], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'cropped_manual.pdf';
+        a.download = 'cropped_all_pages.pdf';
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
+        setProgress('');
         showSuccess('PDF cropped & downloaded for ALL pages!');
       } catch (err) {
-        showError('Failed to crop and download PDF.');
+        setProgress('');
+        showError('Failed to crop and download PDF: ' + err);
       }
     }
   </script>
